@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Timesheet 2026</title>
+
+<style>
+body {
+    font-family: Arial;
+    margin: 0;
+    background: #f4f6f8;
+    padding-bottom: 90px;
+}
+
+header {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: white;
+    padding: 12px;
+    text-align: center;
+    font-weight: bold;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+
+#summaryBar {
+    margin-top: 6px;
+    font-size: 13px;
+    color: #333;
+}
+
+/* WEEK CARD */
+.week {
+    margin: 12px;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+/* 🟢 CURRENT WEEK */
+.current-week {
+    border: 2px solid #27ae60;
+    box-shadow: 0 0 18px rgba(39, 174, 96, 0.25);
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 12px rgba(39, 174, 96, 0.2); }
+    50% { box-shadow: 0 0 22px rgba(39, 174, 96, 0.5); }
+    100% { box-shadow: 0 0 12px rgba(39, 174, 96, 0.2); }
+}
+
+.current-week .week-header {
+    animation: pulse 2s infinite;
+}
+
+/* 🟡 COMPLETED WEEK (GREYED OUT) */
+.completed-week {
+    background: #e9ecef;
+    opacity: 0.75;
+}
+
+/* big tick */
+.tick {
+    color: #27ae60;
+    font-size: 18px;
+    margin-left: 8px;
+}
+
+.week-header {
+    padding: 12px;
+    background: #2c3e50;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+}
+
+.week-body {
+    display: none;
+    padding: 10px;
+}
+
+.week.active .week-body {
+    display: block;
+}
+
+.week.current-week .week-body {
+    display: block;
+}
+
+.day {
+    border-bottom: 1px solid #eee;
+    padding: 10px 0;
+}
+
+.row {
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 0;
+    font-size: 14px;
+}
+
+input[type="time"] {
+    font-size: 14px;
+}
+
+.summary {
+    font-size: 13px;
+    color: #333;
+    margin-top: 8px;
+}
+
+.progress {
+    height: 8px;
+    background: #eee;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-top: 6px;
+}
+
+.bar {
+    height: 100%;
+    background: #27ae60;
+    width: 0%;
+}
+
+.bottom-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    background: white;
+    padding: 10px;
+    gap: 10px;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+}
+
+button {
+    flex: 1;
+    padding: 14px;
+    font-size: 16px;
+    border: none;
+    border-radius: 10px;
+}
+
+.in {
+    background: #2ecc71;
+    color: white;
+}
+
+.out {
+    background: #e74c3c;
+    color: white;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    Timesheet 2026
+    <div id="summaryBar"></div>
+</header>
+
+<div id="weeks"></div>
+
+<div class="bottom-bar">
+    <button class="in" onclick="tapIn()">Tap In</button>
+    <button class="out" onclick="tapOut()">Tap Out</button>
+</div>
+
+<script>
+
+const START = new Date("2026-06-15");
+const END = new Date("2026-12-25");
+const TARGET = 40;
+
+function toKey(d) {
+    return d.toISOString().split("T")[0];
+}
+
+function format(d) {
+    return d.toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "short"
+    });
+}
+
+function getDays() {
+    let days = [];
+    let d = new Date(START);
+
+    while (d <= END) {
+        let day = d.getDay();
+        if (day !== 0 && day !== 6) {
+            days.push(new Date(d));
+        }
+        d.setDate(d.getDate() + 1);
+    }
+    return days;
+}
+
+function groupWeeks(days) {
+    let weeks = {};
+    days.forEach(d => {
+        let weekStart = new Date(d);
+        weekStart.setDate(d.getDate() - (d.getDay() || 7) + 1);
+        let key = toKey(weekStart);
+
+        if (!weeks[key]) weeks[key] = [];
+        weeks[key].push(d);
+    });
+    return weeks;
+}
+
+function loadData() {
+    return JSON.parse(localStorage.getItem("timesheet") || "{}");
+}
+
+function saveData(data) {
+    localStorage.setItem("timesheet", JSON.stringify(data));
+}
+
+function calcHours(inT, outT) {
+    if (!inT || !outT) return 0;
+
+    let [ih, im] = inT.split(":").map(Number);
+    let [oh, om] = outT.split(":").map(Number);
+
+    return ((oh*60+om) - (ih*60+im)) / 60;
+}
+
+/* ✅ CHECK IF WEEK IS COMPLETE */
+function isWeekComplete(weekDays, data) {
+    return weekDays.every(d => {
+        let key = toKey(d);
+        let rec = data[key];
+        return rec && rec.in && rec.out;
+    });
+}
+
+function render() {
+
+    let data = loadData();
+    let days = getDays();
+    let weeks = groupWeeks(days);
+
+    let container = document.getElementById("weeks");
+    container.innerHTML = "";
+
+    let todayKey = toKey(new Date());
+
+    let currentWeekEl = null;
+
+    let sortedWeeks = [];
+
+    Object.keys(weeks).forEach(weekKey => {
+
+        let weekDays = weeks[weekKey];
+
+        let total = 0;
+        let isCurrentWeek = weekDays.some(d => toKey(d) === todayKey);
+        let completed = isWeekComplete(weekDays, data);
+
+        weekDays.forEach(d => {
+            let key = toKey(d);
+            let rec = data[key] || {};
+            total += calcHours(rec.in, rec.out);
+        });
+
+        sortedWeeks.push({
+            weekDays,
+            total,
+            isCurrentWeek,
+            completed
+        });
+    });
+
+    /* 🔄 SORTING RULE:
+       current → top
+       incomplete → middle
+       completed → bottom
+    */
+    sortedWeeks.sort((a, b) => {
+        if (a.isCurrentWeek) return -1;
+        if (b.isCurrentWeek) return 1;
+
+        if (a.completed && !b.completed) return 1;
+        if (!a.completed && b.completed) return -1;
+
+        return 0;
+    });
+
+    sortedWeeks.forEach(w => {
+
+        let weekDiv = document.createElement("div");
+        weekDiv.className = "week";
+
+        if (w.isCurrentWeek) {
+            weekDiv.classList.add("current-week");
+            currentWeekEl = weekDiv;
+        }
+
+        if (w.completed) {
+            weekDiv.classList.add("completed-week");
+        }
+
+        let percent = Math.min((w.total / TARGET) * 100, 100);
+
+        weekDiv.innerHTML = `
+            <div class="week-header" onclick="toggle(this)">
+                <span>
+                    ${format(w.weekDays[0])} → ${format(w.weekDays[w.weekDays.length-1])}
+                    ${w.completed ? '<span class="tick">✔</span>' : ''}
+                    ${w.isCurrentWeek ? ' <small>• CURRENT</small>' : ''}
+                </span>
+                <span>${w.total.toFixed(1)}h</span>
+            </div>
+
+            <div class="week-body">
+                ${w.weekDays.map(d => {
+                    let key = toKey(d);
+                    let rec = data[key] || {};
+
+                    return `
+                    <div class="day">
+                        <div><b>${format(d)}</b></div>
+
+                        <div class="row">
+                            <span>In:</span>
+                            <input type="time" value="${rec.in || ""}"
+                                onchange="edit('${key}','in',this.value)">
+                        </div>
+
+                        <div class="row">
+                            <span>Out:</span>
+                            <input type="time" value="${rec.out || ""}"
+                                onchange="edit('${key}','out',this.value)">
+                        </div>
+
+                        <div class="summary">
+                            Hours: ${calcHours(rec.in, rec.out).toFixed(2)}
+                        </div>
+                    </div>`;
+                }).join("")}
+
+                <div class="summary">
+                    Remaining: ${(TARGET - w.total).toFixed(2)}h
+
+                    <div class="progress">
+                        <div class="bar" style="width:${percent}%"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.appendChild(weekDiv);
+    });
+
+    /* auto expand current week */
+    if (currentWeekEl) {
+        currentWeekEl.classList.add("active");
+    }
+
+    let currentWeek = sortedWeeks.find(w => w.isCurrentWeek);
+    if (currentWeek) {
+        document.getElementById("summaryBar").innerHTML =
+            `This week: ${currentWeek.total.toFixed(1)}h / ${TARGET}h • Remaining ${(TARGET-currentWeek.total).toFixed(1)}h`;
+    }
+}
+
+function toggle(el) {
+    el.parentElement.classList.toggle("active");
+}
+
+function edit(date, field, value) {
+    let data = loadData();
+    if (!data[date]) data[date] = {};
+    data[date][field] = value;
+    saveData(data);
+    render();
+}
+
+function tapIn() {
+    let data = loadData();
+    let key = toKey(new Date());
+    let t = new Date().toTimeString().slice(0,5);
+
+    if (!data[key]) data[key] = {};
+    data[key].in = t;
+
+    saveData(data);
+    render();
+}
+
+function tapOut() {
+    let data = loadData();
+    let key = toKey(new Date());
+    let t = new Date().toTimeString().slice(0,5);
+
+    if (!data[key]) data[key] = {};
+    data[key].out = t;
+
+    saveData(data);
+    render();
+}
+
+render();
+
+</script>
+
+</body>
+</html>
